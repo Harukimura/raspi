@@ -26,7 +26,7 @@ motors.request(consumer="motor_control", type=gpiod.LINE_REQ_DIR_OUT)
 
 # Initialize SPI
 spi = spidev.SpiDev()
-spi.open(0, 0)  # Bus 0, Device 0 (SS1)
+spi.open(1, 1)  # Bus 0, Device 0 (SS1)
 spi.mode = 3
 #spi.no_cs = True
 spi.max_speed_hz = 50000

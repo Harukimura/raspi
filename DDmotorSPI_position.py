@@ -3,6 +3,7 @@ import spidev
 import time
 import math
 import struct
+#import motorsetting
 
 # Define GPIO chip and lines
 CHIP = "gpiochip4"
@@ -11,31 +12,33 @@ LINE_SVON = 2
 LINE_ALARM = 1
 LINE_RESET = 0
 
-LINE_SS1 = 25
-LINE_SS2 = 3
-
 NUM_OF_MOTOR = 2
 # Open GPIO lines
 chip = gpiod.Chip(CHIP)
 lines = chip.get_lines([LINE_SVON, LINE_ALARM, LINE_RESET])
-motors = chip.get_lines([ LINE_SS1, LINE_SS2])
 
 # Set lines for output (except for ALARM, S1, and S2, which are inputs)
 lines.request(consumer="sv_control", type=gpiod.LINE_REQ_DIR_OUT)
-motors.request(consumer="motor_control", type=gpiod.LINE_REQ_DIR_OUT)
+
 
 # Initialize SPI
-spi = spidev.SpiDev()
-spi.open(0, 0)  # Bus 0, Device 0 (SS1)
-spi.mode = 3
+spi10 = spidev.SpiDev()
+spi10.open(1, 0)  # Bus 0, Device 0 
+spi10.mode = 3
 #spi.no_cs = True
-spi.max_speed_hz = 5000000
+spi10.max_speed_hz = 5000000
+
+spi11 = spidev.SpiDev()
+spi11.open(1, 1)  # Bus 0, Device 1
+spi11.mode = 3
+#spi.no_cs = True
+spi11.max_speed_hz = 5000000
 
 # Motor class to hold parameters
 class Motor:
     def __init__(self, pin,SPIid, setting_pulse, Kp, Kd):
         self.pinNumber = pin
-        self.SPIid = SPIid
+        self.SPIid = spi10
         self.setting_Pulse = setting_pulse
         self.Kp = Kp
         self.Kd = Kd
@@ -49,16 +52,18 @@ class Motor:
         self.current = 0
         self.pulse = 0
         self.pulse_filtered = 0
+        self.pulse_min = 0
+        self.pulse_max = 0
         self.data_packet = [0x00 for i in range(12)]
 
 # Initialize motors
-motor1 = Motor(pin=LINE_SS1, SPIid = 0, setting_pulse=1048576, Kp=1.5, Kd=0.2)
-motor2 = Motor(pin=LINE_SS2, SPIid = 1, setting_pulse=2097152, Kp=1.5, Kd=0.2)
+motor1 = Motor(pin=36, SPIid = spi10, setting_pulse=1048576, Kp=1.5, Kd=0.2)
+motor2 = Motor(pin=35, SPIid = spi11, setting_pulse=2097152, Kp=1.5, Kd=0.2)
 
 def initialize_motor(motor):
     """ Initialize motor using SPI communication. """
     for _ in range(5):
-        transfer_spi_data(motor, create_data_packet(motor))  # Send zero value
+        transfer_spi_data(motor)  # Send zero value
         
 
 def create_data_packet(motor):
@@ -107,36 +112,32 @@ def create_data_packet(motor):
         for i in range(10):
             data_packet.append(0x00)
 
-    motor.data_packet = data_packet
+    
     # 結果を表示
     # binary_representation = ' '.join(f'{byte:08b}' for byte in data_packet)
     # print(binary_representation)
-
+    # 送信用データをパケットに保存
+    motor.data_packet = data_packet
 
     return data_packet  # Placeholder for a 12-byte data packet
 
-def transfer_spi_data(motor,data):
+def transfer_spi_data(motor):
     """ xfer motor data over SPI. """
-    motorCSlist = [1 for i in range(NUM_OF_MOTOR)]
-    motorCSlist[motor.SPIid] = 0
-    motors.set_values(motorCSlist)
     time.sleep(0.020)
-    response = spi.xfer2(data)  # xfer 12 bytes
+    response = motor.SPIid.xfer2(motor.data_packet)  # xfer 12 bytes
     time.sleep(0.020)
-    motors.set_values([1 for i in range(NUM_OF_MOTOR)])
+    
     # Extract encoder pulses and current values from the response
     motor.pulse = struct.unpack('<l',bytes(response[1:5]))[0]
     motor.current = struct.unpack('<f', bytes(response[5:9]))[0]
     motor.rad = (2 * math.pi * motor.pulse) / motor.setting_Pulse
+    
     return response
 
 def position_filter(motor, target_angle, dt):
     """ Perform PD control for the motor. """
-    motor.error_old = motor.error
-    motor.error = target_angle - motor.rad
-    motor.cd = motor.error * motor.Kp + (motor.error - motor.error_old) / dt * motor.Kd
-    motor.cd_filtered = motor.cd * (1 - motor.alpha) + motor.cd_filtered * motor.alpha
-    motor.cd_filtered = min(max(motor.cd_filtered, -1.0), 1.0)  # Limit to [-1, 1]
+    motor.pulse_filtered = motor.pulse * (1 - motor.alpha) + motor.pulse_filtered * motor.alpha
+    motor.pulse_filtered = min(max(motor.pulse_filtered, motor.pulse_min), motor.pulse_max)  # Limit to [pulse_min, pulse_max]
 
 def loop():
     """ Main control loop. """
@@ -155,8 +156,8 @@ def loop():
         data1 = create_data_packet(motor1)
         #data2 = create_data_packet(motor2)
         print(data1)
-        data1_receive = transfer_spi_data(motor1, data1)
-        #data2_receive = transfer_spi_data(motor2, data2)
+        data1_receive = transfer_spi_data(motor1)
+        #data2_receive = transfer_spi_data(motor2)
         print(data1_receive )
         print(motor1.pulse )
         #print(motor1.current )
@@ -173,6 +174,7 @@ try:
     loop()
 except KeyboardInterrupt:
     lines.release()
-    motors.release()
+
     chip.close()
-    spi.close()
+    spi10.close()
+    spi11.close()
