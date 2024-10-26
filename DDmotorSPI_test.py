@@ -5,7 +5,7 @@ import math
 import struct
 
 # Define GPIO chip and lines
-CHIP = "gpiochip0"
+CHIP = "gpiochip4"
 #CHIP = "gpiochip4"#addict 4 env
 LINE_SVON = 2
 LINE_ALARM = 1
@@ -15,21 +15,23 @@ LINE_SS1 = 25
 LINE_SS2 = 3
 
 NUM_OF_MOTOR = 2
-# Open GPIO lines
-chip = gpiod.Chip(CHIP)
-lines = chip.get_lines([LINE_SVON, LINE_ALARM, LINE_RESET])
-motors = chip.get_lines([ LINE_SS1, LINE_SS2])
-
-# Set lines for output (except for ALARM, S1, and S2, which are inputs)
-lines.request(consumer="sv_control", type=gpiod.LINE_REQ_DIR_OUT)
-motors.request(consumer="motor_control", type=gpiod.LINE_REQ_DIR_OUT)
 
 # Initialize SPI
 spi = spidev.SpiDev()
-spi.open(1, 1)  # Bus 0, Device 0 (SS1)
-spi.mode = 3
-#spi.no_cs = True
-spi.max_speed_hz = 50000
+spi.open(1, 1)  # Bus 1, Device  (gpio12)
+spi.mode = 3 #definetly 3 kijyutuniburegaaruga 3gayoi
+
+spi.max_speed_hz = 5000
+
+# Open GPIO lines
+chip = gpiod.Chip(CHIP)
+lines = chip.get_lines([LINE_SVON, LINE_ALARM])
+#motors = chip.get_lines([ LINE_SS1, LINE_SS2])
+
+# Set lines for output (except for ALARM, S1, and S2, which are inputs)
+#lines.request(consumer="sv_control", type=gpiod.LINE_REQ_DIR_OUT)
+#motors.request(consumer="motor_control", type=gpiod.LINE_REQ_DIR_OUT)
+
 
 # Motor class to hold parameters
 class Motor:
@@ -117,11 +119,11 @@ def transfer_spi_data(motor,data):
     """ xfer motor data over SPI. """
     motorCSlist = [1 for i in range(NUM_OF_MOTOR)]
     motorCSlist[motor.SPIid] = 0
-    motors.set_values(motorCSlist)
-    time.sleep(0.020)
-    response = spi.xfer2(data)  # xfer 12 bytes
-    time.sleep(0.020)
-    motors.set_values([1 for i in range(NUM_OF_MOTOR)])
+    #motors.set_values(motorCSlist)
+    #time.sleep(0.020)
+    response = spi.xfer2(data,5000)  # xfer 12 bytes
+    #time.sleep(0.020)
+    #motors.set_values([1 for i in range(NUM_OF_MOTOR)])
     # Extract encoder pulses and current values from the response
     motor.pulse = struct.unpack('<l',bytes(response[1:5]))[0]
     motor.current = struct.unpack('<f', bytes(response[5:9]))[0]
@@ -171,6 +173,6 @@ try:
     loop()
 except KeyboardInterrupt:
     lines.release()
-    motors.release()
+    #motors.release()
     chip.close()
     spi.close()
