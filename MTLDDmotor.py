@@ -77,7 +77,7 @@ def initialize_motor(motor,SPI):
     while i<20:
         print(f"failed {i} time")
         #create_data_packet_current(motor,0.0)
-        create_data_packet_position(motor,0.0)
+        create_data_packet_position(motor,motor.pulse)
         print(motor.data_packet)
         transfer_spi_data(motor, spi)  # Send zero value
         print(motor.data_packet)
@@ -146,7 +146,7 @@ def create_data_packet_current(motor, value):
 
 def create_data_packet_position(motor,value):
     """ Prepare a data packet for SPI transfer. pos are incriment or decriment from current position"""
-    value = 0.0
+    #value = 10.0
     SPI_RESET = 0
     DIN4  = 0
     DIN3 = 0
@@ -159,9 +159,18 @@ def create_data_packet_position(motor,value):
     # 送信する値を4バイトのデータとして変換
     # valueはモーターの制御対象の値（例: 電流、位置）。ここではfloatを整数に変換し、バイト列にする
     #value = min(max(value, motor.pos_min), motor.pos_max) 
-    position = motor.initialPosition #+ value #* motor.setting_Pulse / (2 * math.pi)
+    position = value #+ value #* motor.setting_Pulse / (2 * math.pi)
+    print(type(position),end = "")
+    print(position,end = "")
     pos_data_bytes = struct.pack('<i',(int)(position))
-
+    print(pos_data_bytes)
+    
+    #position = (int)(motor.initialPosition + value)
+    #print(type(position),end = "")
+    #print(position,end = "")
+    #pos_data_bytes = struct.pack('<i',(int)(position))
+    #print(pos_data_bytes)
+    
     # 予約バイト
     #unused_data12 = [0x00, 0x00]
     #unused_data89 = [0x00, 0x00]
@@ -221,7 +230,7 @@ def transfer_spi_data(motor,SPI):
         motor.current = struct.unpack('<f', bytes(response[5:9]))[0]
         motor.rad = (2 * math.pi * (motor.pulse - motor.initialPosition)) / motor.setting_Pulse
         
-        print("success!")
+        print("xfer success!")
         
     return response
 
@@ -234,16 +243,16 @@ def PDcurrent_control_motor(motor, target_angle, dt):
     motor.cd_filtered = min(max(motor.cd_filtered, -1.0), 1.0)  # Limit to [-1, 1]
 
 def control_position(motor,SPI,value):
-    create_data_packet_position(motor,(motor.pulse - motor.initialPosition))
+    create_data_packet_position(motor,(motor.pulse))
     transfer_spi_data(motor,SPI)#SERVO with current position
     
     val_pulse = value/2/np.pi * motor.setting_Pulse
     error_pulse = (motor.pulse - val_pulse)
     while error_pulse   > 100 or error_pulse < -100:
         if error_pulse  >0:
-            create_data_packet_position(motor,10)# order with pulse+10
+            create_data_packet_position(motor,int(motor.pulse +10))# order with pulse+10
         elif error_pulse <0:
-            create_data_packet_position(motor,-10)# order with pulse-10
+            create_data_packet_position(motor,int(motor.pulse -10))# order with pulse-10
             
         print(motor.data_packet)
         transfer_spi_data(motor,SPI)
@@ -258,8 +267,7 @@ def loop():
     pre_time = time.time()
     global servo_mode
     while True:
-        i= 0
-        while(i<50):
+        for i in range(50):
             # Calculate loop duration
             dt = time.time() - pre_time
             pre_time = time.time()
@@ -270,7 +278,7 @@ def loop():
             
             # Send SPI data to motors
             servo_mode = 0x08
-            data1 = create_data_packet_position(motor1,0)
+            data1 = create_data_packet_position(motor1,motor1.pulse +i*200)
             #data2 = create_data_packet(motor2,motor2.cd_filtered)
             print(data1)
             data1_receive = transfer_spi_data(motor1, spi)
@@ -281,9 +289,8 @@ def loop():
             #print(motor1.current )
             # Delay for a short while (example loop rate)
             time.sleep(0.1)
-            i+=1
-        i=0
-        while(i<50):
+
+        for i in range(50):
             # Calculate loop duration
             dt = time.time() - pre_time
             pre_time = time.time()
@@ -293,9 +300,8 @@ def loop():
             #PDcurrent_control_motor(motor2, target_angle=math.pi / 2, dt=dt)
             
             # Send SPI data to motors
-            servo_mode= 0x00
-            position_d = motor1.rad * 0.9 + 0 * 0.1
-            data1 = create_data_packet_position(motor1,0)
+            servo_mode= 0x08
+            data1 = create_data_packet_position(motor1,motor1.pulse -i*200)
             #data2 = create_data_packet(motor2,motor2.cd_filtered)
             print(data1)
             data1_receive = transfer_spi_data(motor1, spi)
@@ -306,7 +312,6 @@ def loop():
             #print(motor1.current )
             # Delay for a short while (example loop rate)
             time.sleep(0.1)
-            i+=1
 
 def end_process(motor,SPI):
     global servo_mode
@@ -332,7 +337,6 @@ if __name__ == "__main__":
     # Start the control loop
     try:
         servo_mode = 0x00#already global
-        
         loop()
     except KeyboardInterrupt:
         servo_mode = 0x00
