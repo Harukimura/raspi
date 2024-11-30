@@ -59,6 +59,7 @@ class Motor:
         self.pos_min = pos_min
         self.error = 0
         self.error_old = 0
+        self.c_old = 0
         self.cd = 0
         self.cd_filtered = 0
         self.c_threshold = 1.0
@@ -240,7 +241,7 @@ class Motor:
     def initialize_motor_c(self):
         """ Initialize motor using SPI communication. """
         Motor.servo_mode = 0x00
-        self.SPI.max_speed_hz = 100000
+        self.SPI.max_speed_hz = 1000000
         i= 0
         while i<20:
             print(f"failed {i} time")
@@ -249,7 +250,7 @@ class Motor:
             print(self.data_packet)
             self.transfer_spi_data()  # Send zero value
             print(self.data_packet)
-            time.sleep(0.01)
+            #time.sleep(0.01)
             if self.check == True:
                 i+=1
             
@@ -267,12 +268,12 @@ class Motor:
             self.SPI.max_speed_hz = 100000
             i= 0
             while i<5:
-                print(f"failed {i} time")
+                print(f"end command {i} time")
                 #create_data_packet_current(motor,0.0)
                 self.create_data_packet_current(0.0)
-                print(self.data_packet)
+                #print(self.data_packet)
                 self.transfer_spi_data()  # Send zero value
-                print(self.data_packet)
+                #print(self.data_packet)
                 time.sleep(0.01)
                 if self.check == True:
                     i+=1
@@ -293,9 +294,9 @@ class Motor:
                 #create_data_packet_current(motor,0.0)
                 value = self.pulse
                 self.create_data_packet_position(value)
-                print(self.data_packet)
+                #print(self.data_packet)
                 self.transfer_spi_data()  # Send zero value
-                print(self.data_packet)
+                #print(self.data_packet)
                 time.sleep(0.01)
                 if self.check == True:
                     i+=1
@@ -307,26 +308,26 @@ class Motor:
         
         
 # Initialize motors ##########################################################################################################################################
-motor1 = Motor(pin=LINE_SS1, SPIid = 0, setting_pulse=1048576, pos_max=np.pi/4, pos_min=-np.pi/4,spi_bus =1,spi_device = 1)
-motor2 = Motor(pin=LINE_SS2, SPIid = 1, setting_pulse=1048576, pos_max=np.pi/4, pos_min=-np.pi/4,spi_bus =1,spi_device = 0)
+motor1 = Motor(pin=LINE_SS1, SPIid = 0, setting_pulse=1048576, pos_max=np.pi/4, pos_min=-np.pi/4,spi_bus =1,spi_device = 0)#
+motor2 = Motor(pin=LINE_SS2, SPIid = 1, setting_pulse=1048576, pos_max=np.pi/4, pos_min=-np.pi/4,spi_bus =1,spi_device = 1)#
 
 
-def joint_impedance_control(motor,target_angle,target_velocity,dt):
+def joint_impedance_control(motor,target_angle,target_velocity,theta_d_ddot,dt):
     
     error = target_angle - motor.rad
     error_dot = target_velocity - (motor.rad - motor.old_rad)/dt
     
-    M = [[0.05, 0.0], [0.0, 0.05]]  #慣性
+    M = [[0.00018, 0.0], [0.0, 0.00018]]  #慣性mll 0.018*0.1*0.1
     B = [[0.25, 0.0], [0.0, 0.25]]  #粘性
     K = [[1.0, 0.0], [0.0, 1.0]]  #剛性
-    theta_d_ddot = [0,0]
+    #theta_d_ddot = [0,0]
     tau = (np.dot(M, theta_d_ddot) + np.dot(B, error_dot) + np.dot(K, error))
-    print(f"tau:{tau}")
+    #print(f"tau:{tau}")
     print(f"error:{error}")
     print(f"ed:{error_dot}")
     cd = tau/motor.torque_constant#current
     #cdf = min((max(1-0.9) * motor.current + 0.9*cd , -motor.c_threshold), motor.c_threshold)
-    cdf = (1-0.3) * motor.current + 0.3*cd
+    cdf = 0.7 * motor.c_old + (1-0.7)*cd
     cdf_cut = min(max(cdf[0,0],-1 * motor.c_threshold),motor.c_threshold)
     return cdf_cut
 
@@ -376,10 +377,10 @@ def loop():
             Motor.servo_mode = 0x00
             data1 = motor1.create_data_packet_current(0.0)
             #data2 = create_data_packet(motor2,motor2.cd_filtered)
-            print(data1)
+            #print(data1)
             data1_receive = motor1.transfer_spi_data()
             #data2_receive = transfer_spi_data(motor2, data2)
-            print(data1_receive )
+            #print(data1_receive )
             print(f"\033[31m{motor1.pulse }\033[0m",end = " ")
             print(motor1.initialPosition)
             print(joint_impedance_control(motor1,motor1.initialPosition_rad,0.0,dt))
@@ -398,10 +399,10 @@ def loop():
             servo_mode= 0x00
             data1 = motor1.create_data_packet_position(motor1.pulse -200)
             #data2 = create_data_packet(motor2,motor2.cd_filtered)
-            print(data1)
+            #print(data1)
             data1_receive = motor1.transfer_spi_data()
             #data2_receive = transfer_spi_data(motor2, data2)
-            print(data1_receive )
+            #print(data1_receive )
             print(motor1.pulse ,end = " ")
             print(motor1.initialPosition)
             #print(motor1.current )
@@ -412,30 +413,35 @@ def loop_impedance():
     """ Main control loop. """
     pre_time = time.time()
     time.sleep(0.1)
+    tim = time.time()
     while True:
-        for i in range(50):
+        tim = time.time()
+        for i in range(10):
             # Calculate loop duration
             dt = time.time() - pre_time
             pre_time = time.time()
             
             # Update motor control
             Motor.servo_mode = 0x08
-            val1 = joint_impedance_control(motor1,motor1.initialPosition_rad,0.0,dt)
-            val2 = joint_impedance_control(motor2,motor2.initialPosition_rad,0.0,dt)
-            data1 = motor1.create_data_packet_current(val1)
             
-            #Motor.servo_mode = 0x00
+            val1 = joint_impedance_control(motor1,motor1.initialPosition_rad,0.0,0.0,dt)
+            data1 = motor1.create_data_packet_current(val1)
+            data1_receive = motor1.transfer_spi_data()
+            
+            val2 = joint_impedance_control(motor2,motor2.initialPosition_rad,0.0,9.81,dt)
             data2 = motor2.create_data_packet_current(val2)
+            data2_receive = motor2.transfer_spi_data()
+                        
+            """
             print(data1)
             print(data2)
-            data1_receive = motor1.transfer_spi_data()
-            data2_receive = motor2.transfer_spi_data()
-            print(data1_receive )
+            """
+            #print(data1_receive )
             print(f"\033[31m{motor1.pulse }\033[0m",end = " ")
             print(motor1.initialPosition)
             print(val1)
             
-            print(data2_receive )
+            #print(data2_receive )
             print(f"\033[31m{motor2.pulse }\033[0m",end = " ")
             print(motor2.initialPosition)
             print(val2)
@@ -443,7 +449,10 @@ def loop_impedance():
             print("")
             #print(motor1.current )
             # Delay for a short while (example loop rate)
-            time.sleep(0.001)
+            #time.sleep(0.01)
+        interval = time.time()-tim
+        print(f"\033[32m{interval}\033[0m")
+        
 
 
         
@@ -459,6 +468,7 @@ if __name__ == "__main__":
     try:
         Motor.servo_mode = 0x00#already global
         loop_impedance()
+
     except KeyboardInterrupt:
         servo_mode = 0x00
         motor1.end_process_c()

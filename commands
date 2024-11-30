@@ -1,0 +1,8 @@
+#仮想環境の起動
+source ./myenv/bin/activate
+#仮想環境の作成 --system-site-packagesがないとGPIO標準ライブラリがないのでGPIOが動かない
+python -m venv .name_of_env --system-site-packages
+#もしグローバルに入れたいなら
+--break-system-packages
+#code保存先
+cd ./codes./myenv
