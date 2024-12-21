@@ -385,16 +385,17 @@ def workspace_impedance_control_2DOF(motor_a, motor_b, target_position, target_v
     lee = 0.1
     rad_a =  motor_a.initialPosition_rad - motor_a.rad + np.pi/2#CW minus
     rad_b = motor_b.rad - motor_b.initialPosition_rad
-    Jte = [[-0.1*np.sin(target_position[0]), 0.1*np.cos(target_position[0])],[0.1*np.sin(target_position[1]), -0.1*np.cos(target_position[1])]]
+    #Jte = [[-0.1*np.sin(target_position[0]), 0.1*np.cos(target_position[0])],[0.1*np.sin(target_position[1]), -0.1*np.cos(target_position[1])]]
+    Jte = [[-0.1*np.sin(rad_a), 0.1*np.cos(rad_a)],[0.1*np.sin(rad_b), -0.1*np.cos(rad_b)]]
     pos = [l1*np.cos(rad_a) - lee*np.cos(rad_b), l1*np.sin(rad_a) - lee*np.sin(rad_b)]
     errors = [pos[0] - target_position[0],  pos[1] - target_position[1]]
     error_dots =[ -(motor_a.rad - motor_a.old_rad)/dt - target_velocities[0] , (motor_b.rad - motor_b.old_rad)/dt - target_velocities[1]]
     #theta_d_ddots = [0.0,0.0]
     #M = [[0.00018, 0.0], [0.0, 0.00018]]  #慣性mll 0.018*0.1*0.1
     C = [[0.0005, 0.0], [0.0, 0.0005]]  #粘性
-    K = [[5, 0.0], [0.0, 0]]  #剛性
+    K = [[30, 0.0], [0.0, 30]]  #剛性
     #theta_d_ddot = [0,0]
-    tau =   -np.dot(C, error_dots) + np.dot( Jte,np.dot(K, errors))  + gravity_compensation(motor_a, motor_b) #+ (np.dot(M, theta_d_ddots)
+    tau =   -np.dot(C, error_dots) - np.dot( Jte,np.dot(K, errors))  + gravity_compensation(motor_a, motor_b) #+ (np.dot(M, theta_d_ddots)
     #print(f"tau:{tau}")
     #print(f"error:{errors}")
     #print(f"ed:{error_dot}")
