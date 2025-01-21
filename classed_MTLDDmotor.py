@@ -730,6 +730,7 @@ def loop_impedance_adoptive(Model):
                 rad2radxy(motor1,motor2)
                 #databuffer = [pre_time,dt,motor1.pulse,motor1.rad,motor1.current,motor1.initialPosition,val1,motor2.pulse,motor2.rad,motor2.current,motor2.initialPosition,val2]
                 datalist.append([pre_time,dt,motor1.pulse,motor1.radxy,motor1.current,targetAngle[0],val1,motor2.pulse,motor2.radxy,motor2.current,targetAngle[1],val2,gc[0],-gc[1], errors[0], errors[1] ])
+                
                 """
                 print(data1)
                 print(data2)
