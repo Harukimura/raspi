@@ -34,6 +34,7 @@ lines = chip.get_lines([LINE_SVON, LINE_ALARM])#gpio settings
 #lines.request(consumer="sv_control", type=gpiod.LINE_REQ_DIR_OUT)
 #motors.request(consumer="motor_control", type=gpiod.LINE_REQ_DIR_OUT)
 
+xfererror =0
 
 # Motor class to hold parameters ###################################################################################################################################
 class Motor:
@@ -45,7 +46,7 @@ class Motor:
         self.SPI = spidev.SpiDev()
         self.SPI.open(spi_bus, spi_device)  # Bus 1, Device 1  (gpio12)
         self.SPI.mode = 3 #definetly 3 kijyutuniburegaaruga 3gayoi
-        self.SPI.max_speed_hz = 3000000
+        self.SPI.max_speed_hz = 300000
         
         self.setting_Pulse = setting_pulse
         self.Kp = 1
@@ -192,7 +193,7 @@ class Motor:
         """ xfer motor data over SPI. """
         self.check = False
         #time.sleep(0.020)
-        response = self.SPI.xfer2(self.data_packet)  # xfer 12 bytes
+        response = self.SPI.xfer2(self.data_packet,300000,10)  # xfer 12 bytes bss138 <300kHz
         #time.sleep(0.020)
         
         # Extract encoder pulses and current values from the response
@@ -212,7 +213,10 @@ class Motor:
             self.rad = self.alpha * (2 * math.pi * self.pulse) / self.setting_Pulse  + (1-self.alpha) * self.old_rad#filtered
             #self.rad = (2 * math.pi * (self.pulse - self.initialPosition)) / self.setting_Pulse
             #print("xfer success!")
-        
+        else:
+            #print(f" {self.pinNumber} xfer failed!")
+            global xfererror
+            xfererror=xfererror+1
         return response    
         
     def initialize_motor_p(self):
@@ -311,13 +315,28 @@ class Motor:
                 break
         self.SPI.close()
         
-        
+class adoptiveModel:
+    def __init__(self,dimension,model_zero,threshold):
+        self.dim = dimension
+        self.model = np.array(model_zero)
+        self.threshold = np.array(threshold)
+    def modelUpdate(self,val):
+        for i in range(self.dim):
+            if val[i] < self.threshold[i][0]:
+                self.model[i] = self.threshold[i][0]
+            elif val[i] > self.threshold[i][1]:
+                self.model[i] = self.threshold[i][1]
+            else:
+                self.model[i] = val[i]
+    # 動作確認
+    #M = adoptiveModel(dimension=2, model_zero=[0.4, 0.4], threshold=[[0.3, 0.5], [0.3, 0.5]])
+    #M.modelUpdate([0.2, 0.6])  # 更新後 self.model は [0.3, 0.5]
+    #print(M.model)
+    
 # Initialize motors ##########################################################################################################################################
-motor1 = Motor(pin=LINE_SS1, SPIid = 0, setting_pulse=1048576, pos_max=np.pi/4, pos_min=-np.pi/4,spi_bus =1,spi_device = 0)#
-motor2 = Motor(pin=LINE_SS2, SPIid = 1, setting_pulse=1048576, pos_max=np.pi/4, pos_min=-np.pi/4,spi_bus =1,spi_device = 1)#
+motor1 = Motor(pin=18, SPIid = 0, setting_pulse=1048576, pos_max=np.pi/4, pos_min=-np.pi/4,spi_bus =1,spi_device = 0)#
+motor2 = Motor(pin=17, SPIid = 1, setting_pulse=1048576, pos_max=np.pi/4, pos_min=-np.pi/4,spi_bus =1,spi_device = 1)#
 
-Model = np.array( [-0.04*Motor.g[1]*0.1, 0.04* Motor.g[1]*0.1 ])
-#Model = np.array( [0,0])
 
 def rad2radxy(motor_a,motor_b):
     motor_a.radxy =  motor_a.initialPosition_rad - motor_a.rad + np.pi/2#CW minus CCW plus
@@ -326,7 +345,7 @@ def rad2radxy(motor_a,motor_b):
 
 def gravity_compensation(motor_a,motor_b):
     #memo トルクの次元ではモデル通りに考えて良い　トルクから電流に変換するときに回転方向は直す
-    M = [[0.04 +0.01, 0.0], [0.0, 0.04 +0.01]]
+    M = [[0.0576, 0.0], [0.0, 0.0570]]
     l1 = 0.1
     lee = 0.1
     l2 = 0.03
@@ -338,7 +357,7 @@ def gravity_compensation(motor_a,motor_b):
     jt2 = np.array([[-l1*np.sin(rad_a),-1/2*l2*np.sin(rad_b)],[l1*np.cos(rad_a),1/2*l2*np.cos(rad_b)]])
     jt3 = np.array([[-1/2*l1*np.sin(rad_a),-l2*np.sin(rad_b)],[1/2*l1*np.sin(rad_a),l2*np.sin(rad_b)]])
     jt4 = np.array([[-1/2*l1*np.sin(rad_a),0],[1/2*l1*np.sin(rad_a),0]])
-    Jte = [[-l1*np.sin(rad_a), lee*np.cos(rad_a)],[l1*np.sin(rad_b), -lee*np.cos(rad_b)]]
+    Jte = [[l1*np.sin(rad_a), l1*np.cos(rad_a)],[lee*np.sin(rad_b), -lee*np.cos(rad_b)]]
     #TauConstants = [[1/motor_a.torque_constant,0],[0,1/motor_b.torque_constant]]
     #return - (np.dot( Jte,np.dot(M,Motor.g)) )#only mass point model
     #CWplus with current
@@ -349,12 +368,22 @@ def adoptive_gravity_compensation(motor_a,motor_b,model,errors,target_angles):
     #print(model)
     rad2radxy(motor_a, motor_b)
     Ginv = np.array([[0.001, 0],[0, 0.001]])
-    Yqd = np.array([[np.cos(target_angles[0]), 0],[0, np.cos(target_angles[1])]])#target?
-    model = model  - Ginv @ Yqd.T @ errors
+    #Yqd = np.array([[np.cos(target_angles[0]), 0],[0, np.cos(target_angles[1])]])#target?
+    Yqd = np.array([[np.cos(motor_a.radxy), 0],[0, np.cos(motor_b.radxy)]])
+    #model = model  - Ginv @ Yqd.T @ errors
+    model.modelUpdate(model.model  - Ginv @ Yqd.T @ errors)
     
-    print(model)
-    return  np.dot(Yqd,model.T),model
-    #return  -np.dot(fixer,(np.dot( Jte,np.dot(M,Motor.g)) +np.dot( jt1,np.dot(0.001,Motor.g))+np.dot( jt2,np.dot(0.001,Motor.g)) +np.dot( jt3,np.dot(0.0036+0.001,Motor.g)) +np.dot( jt4,np.dot(0.003,Motor.g)) ))
+    
+    #4 dimension
+    #Ginv = np.array([[0.001, 0,0,0],[0, 0.001, 0,0],[0,0, 0.001, 0],[0,0,0, 0.001]])
+    #errors2to4 = errors @ np.array([[1,1,0,0],[0,0,1,1]])
+    #selectionMatrix = np.array([[1,1,0,0],[0,0,1,1]])
+    #Yqd = np.array([[np.sin(target_angles[0]), 0,0,0],[0,np.cos(target_angles[0]), 0,0],[0,0,np.sin(target_angles[1]), 0],[0,0,0, np.cos(target_angles[1])]])#target?
+    #model = model  - Ginv @ Yqd.T @ errors2to4
+    
+    #print(model)
+    return  np.dot(Yqd,model.model.T),model #normal
+    #return  np.dot(selectionMatrix,np.dot(Yqd,model.T)),model #4dmodel
 
 def joint_impedance_control(motor,target_angle,target_velocity,theta_d_ddot,dt):
     
@@ -382,14 +411,14 @@ def joint_impedance_control_2DOF(motor_a, motor_b, target_angles, target_velocit
     error_dots =[ -(motor_a.rad - motor_a.old_rad)/dt -target_velocities[0], (motor_b.rad - motor_b.old_rad)/dt -target_velocities[1]]
     #theta_d_ddots = [0.0,0.0]
     #M = [[0.00018, 0.0], [0.0, 0.00018]]  #慣性mll 0.018*0.1*0.1
-    C = [[0.003, 0.0], [0.0, 0.003]]  #粘性
-    K = [[0.4, 0.0], [0.0, 0.4]]  #剛性
+    C = [[0.02, 0.0], [0.0, 0.02]]  #粘性
+    K = [[0.5, 0.0], [0.0, 0.5]]  #剛性
     #theta_d_ddot = [0,0]
     tau =  -np.dot(C, error_dots) -np.dot(K, errors)  + gravity_compensation(motor_a, motor_b)#+ (np.dot(M, theta_d_ddots)
     #print(f"tau:{tau}")
     #print(f"error:{error}")
     #print(f"ed:{error_dot}")
-    cd1 = -tau[0]/motor_a.torque_constant#torque2current motor setting CW = current>0
+    cd1 = -tau[0]/motor_a.torque_constant#torque2 current motor setting CW = current>0
     cd2 = tau[1]/motor_b.torque_constant#torque2current motor setting CW = current<0
     #cdf = min((max(1-0.9) * motor.current + 0.9*cd , -motor.c_threshold), motor.c_threshold)
     #cdf = 0.7 * motor.c_old + (1-0.7)*cd
@@ -403,10 +432,10 @@ def adoptive_joint_impedance_control_2DOF(motor_a, motor_b, target_angles, targe
     error_dots =[ -(motor_a.rad - motor_a.old_rad)/dt -target_velocities[0], (motor_b.rad - motor_b.old_rad)/dt -target_velocities[1]]
     #theta_d_ddots = [0.0,0.0]
     #M = [[0.00018, 0.0], [0.0, 0.00018]]  #慣性mll 0.018*0.1*0.1
-    C = [[0.03, 0.0], [0.0, 0.03]]  #粘性
-    K = [[1, 0.0], [0.0, 1]]  #剛性
+    C = [[0.02, 0.0], [0.0, 0.02]]  #粘性
+    K = [[0.5, 0.0], [0.0, 0.5]]  #剛性
     #theta_d_ddot = [0,0]
-    ga , model= adoptive_gravity_compensation(motor_a, motor_b, model,errors,target_angles)
+    ga, model= adoptive_gravity_compensation(motor_a, motor_b, model,errors,target_angles)
     tau =  -np.dot(C, error_dots) -np.dot(K, errors)  + ga #+ (np.dot(M, theta_d_ddots)
     #print(f"tau:{tau}")
     #print(f"error:{error}")
@@ -417,7 +446,7 @@ def adoptive_joint_impedance_control_2DOF(motor_a, motor_b, target_angles, targe
     #cdf = 0.7 * motor.c_old + (1-0.7)*cd
     cd1f_cut = min(max(cd1,-1 * motor_a.c_threshold),motor_a.c_threshold)
     cd2f_cut = min(max(cd2,-1 * motor_b.c_threshold),motor_b.c_threshold)
-    return [cd1f_cut,cd2f_cut,ga,model]
+    return [cd1f_cut,cd2f_cut,ga,errors,model]
 
 def workspace_impedance_control_2DOF(motor_a, motor_b, target_position, target_velocities, dt):
     
@@ -643,8 +672,7 @@ def loop_impedance2():
     pre_time = time.time()#initialize
     time.sleep(0.1)
     tim = time.time()
-    datalist1 = []
-    datalist2 = []
+    datalist = []
     motions = [[np.pi/2,0],[np.pi/4+np.pi/2,0],[+np.pi,np.pi/2],[np.pi/4+np.pi/2, np.pi/4],[np.pi/4, -np.pi/4],[0,-np.pi/2]]
     for i in range(6):
         tim = time.time()
@@ -658,17 +686,22 @@ def loop_impedance2():
             
             # Update motor control
             Motor.servo_mode = 0x08
-            valg = np.dot([[1/motor1.torque_constant,0],[0,-1/motor2.torque_constant]],gravity_compensation(motor1, motor2))
-            errors = [(motor1.initialPosition_rad +np.pi/2 -motor1.rad) -targetAngle[0] , (motor2.rad - motor2.initialPosition_rad) - targetAngle[1]]
+            valg = np.dot([[1/motor1.torque_constant, 0],[0, 1/motor2.torque_constant]], gravity_compensation(motor1, motor2))
+            errors = [(motor1.initialPosition_rad +np.pi/2 -motor1.rad) -targetAngle[0] , (motor2.rad - motor2.initialPosition_rad) - targetAngle[1]]#4 observation
             val = joint_impedance_control_2DOF(motor1, motor2, targetAngle, targetVelocities, dt)
             data1 = motor1.create_data_packet_current(val[0])
-            data1_receive = motor1.transfer_spi_data()
-            
             data2 = motor2.create_data_packet_current(val[1])
+            
+            data1_receive = motor1.transfer_spi_data()
+            #time.sleep(0.00001)
+            
             data2_receive = motor2.transfer_spi_data()
+            #time.sleep(0.00001)
+            
             rad2radxy(motor1,motor2)
             #databuffer = [pre_time,dt,motor1.pulse,motor1.rad,motor1.current,motor1.initialPosition,val1,motor2.pulse,motor2.rad,motor2.current,motor2.initialPosition,val2]
-            datalist.append([pre_time,dt,motor1.pulse,motor1.radxy,motor1.current,targetAngle[0],val[0],motor2.pulse,motor2.radxy,motor2.current,targetAngle[1],val[1],valg[0],valg[1], errors[0], errors[1] ])
+            datalist.append([pre_time,dt,motor1.pulse,motor1.radxy,motor1.current,targetAngle[0],-val[0],motor2.pulse,motor2.radxy,motor2.current,targetAngle[1],val[1],valg[0],valg[1], errors[0], errors[1] ])
+            
             """
             print(data1)
             print(data2)
@@ -692,45 +725,120 @@ def loop_impedance2():
             writer = csv.writer(file)
             writer.writerows(datalist)
             
-def loop_impedance_adoptive(Model):
+def loop_impedance_adoptive():
     """ Main control loop. """
-    data_label = ['time','dt','pulse','rad','current','rad_target','val_target','pulse','rad','current','rad_target','val_target','adaptive1','adaptive2',"E1","E2"]
-    userNamedf= "40adoptive"
+    data_label = ['time','dt','rad','rad_target','current','val_target','rad','rad_target','current','val_target','adaptive1','adaptive2',"E1","E2","model1","model2"]
+    userNamedf= "40adoptivem1"
     fname = "datas/" +time.strftime("%Y-%m-%d %H：%M：%S" + userNamedf ,time.localtime()) + ".csv"
     with open(fname,"w",newline = "") as file:
         writer = csv.writer(file)
         writer.writerow(data_label)
         
+    Model = np.array( [-0.04*Motor.g[1]*0.1, 0.04* Motor.g[1]*0.1 ]) #normal 
+    #Model = np.array( [0,-0.04*Motor.g[1]*0.1, 0, 0.04* Motor.g[1]*0.1 ])
     pre_time = time.time()#initialize
-    time.sleep(0.1)
     tim = time.time()
-    datalist1 = []
-    datalist2 = []
-    motions = [[np.pi/2,0],[np.pi/4+np.pi/2,0],[+np.pi,np.pi/2],[np.pi/4+np.pi/2, np.pi/4],[np.pi/4, -np.pi/4],[0,-np.pi/2],[0,-np.pi/2]]
-    for i in range(6):
+    datalist = []
+    #motions = [[np.pi/2,0],[np.pi/4+np.pi/2,0],[+np.pi,np.pi/2],[np.pi/4+np.pi/2, np.pi/4],[np.pi/4, -np.pi/4],[0,-np.pi/2],[0,-np.pi/2]
+    motions = [[np.pi/4, 0], [np.pi/4,0],[np.pi/20.0*6 , 0], [np.pi/20.0*7 , 0],[np.pi/20.0*8 , 0],[np.pi/20.0*9 , 0],[np.pi/20.0*10 , 0],[np.pi/20.0*11 , 0],[np.pi/20.0*12 , 0],[np.pi/20.0*13 , 0],[np.pi/20.0*14 , 0],[np.pi/20.0*15 , 0]]
+    targetVelocities = [0.0, 0.0]
+    Motor.servo_mode = 0x08
+    num_of_loop =100000
+    
+    for i in range(12):
         tim = time.time()
-        datalist = []
-        nowtargetAngle = [+ motions[i][0], motions[i][1]]
-        nexttargetAngle = [+ motions[i+1][0], motions[i+1][1]]
-        targetVelocities = [0.0, 0.0]
-        for j in range(10000):
+        targetAngle = [motions[i][0],motions[i][1]]#choose one 
+        
+        for j in range(num_of_loop):
             # Calculate loop duration
             dt = time.time() - pre_time
             pre_time = time.time()
-            targetAngle = [ nowtargetAngle[0]*(10000 -j)/10000.0 + nexttargetAngle[0]*j/10000.0, nowtargetAngle[1]*(10000 -j)/10000.0 + nexttargetAngle[1]*j/10000.0]
+            
+            errors = [(motor1.initialPosition_rad +np.pi/2 -motor1.rad) -targetAngle[0] , (motor2.rad - motor2.initialPosition_rad) - targetAngle[1]]#4 observation            
+            val1,val2,gc,Model = adoptive_joint_impedance_control_2DOF(motor1, motor2, targetAngle, targetVelocities, dt, Model)
+            
+            data1 = motor1.create_data_packet_current(val1)
+            data1_receive = motor1.transfer_spi_data()
+            data2 = motor2.create_data_packet_current(val2)
+            data2_receive = motor2.transfer_spi_data()
+            
+            rad2radxy(motor1,motor2)
+            #databuffer = [pre_time,dt,motor1.pulse,motor1.rad,motor1.current,motor1.initialPosition,val1,motor2.pulse,motor2.rad,motor2.current,motor2.initialPosition,val2]
+            datalist.append([pre_time,dt,motor1.radxy,targetAngle[0],motor1.current,val1,motor2.radxy,targetAngle[1],motor2.current,val2,-gc[0]*10,gc[1]*10,errors[0],errors[1],Model[0],Model[1]])
+            #datalist.append([pre_time,dt,motor1.radxy,targetAngle[0],motor1.current,val1,motor2.radxy,targetAngle[1],motor2.current,val2,-gc[0]*10,gc[1]*10,Model[0],Model[1],Model[2],Model[3]])#4d
+            """
+            print(data1)
+            print(data2)
+            """
+            #print(data1_receive )
+            #print(f"\033[31m{motor1.pulse }\033[0m",end = " ")
+            #print(motor1.initialPosition)
+            #print(val1)
+            
+            #print(data2_receive )
+            #print(f"\033[31m{motor2.pulse }\033[0m",end = " ")
+            #print(motor2.initialPosition)
+            #print(val2)
+            
+            #print("")
+            #print(motor1.current )
+            # Delay for a short while (example loop rate)
+            #time.sleep(0.01)
+    print(tim -pre_time)
+    with open(fname,"a",newline = "") as file:
+        writer = csv.writer(file)
+        writer.writerows(datalist)
+        
+        
+def loop_impedance_adoptive_slow():
+    """ Main control loop. """
+    data_label = ['time','dt','rad','rad_target','current','val_target','rad','rad_target','current','val_target','adaptive1','adaptive2',"E1","E2","model1","model2"]
+    userNamedf= "40adoptivem1"
+    fname = "datas/" +time.strftime("%Y-%m-%d %H：%M：%S" + userNamedf ,time.localtime()) + ".csv"
+    with open(fname,"w",newline = "") as file:
+        writer = csv.writer(file)
+        writer.writerow(data_label)
+        
+    Model = adoptiveModel(dimension = 2,model_zero = [-0.04*Motor.g[1]*0.1, 0.04* Motor.g[1]*0.1 ], threshold = [[0.0, 0.1],[-0.1, -0.01]])
+    #np.array( [-0.04*Motor.g[1]*0.1, 0.04* Motor.g[1]*0.1 ]) #normal 
+    #Model = np.array( [0,-0.04*Motor.g[1]*0.1, 0, 0.04* Motor.g[1]*0.1 ])
+    pre_time = time.time()#initialize
+    tim = time.time()
+    datalist = []
+    #motions = [[np.pi/2,0],[np.pi/4+np.pi/2,0],[+np.pi,np.pi/2],[np.pi/4+np.pi/2, np.pi/4],[np.pi/4, -np.pi/4],[0,-np.pi/2],[0,-np.pi/2]
+    motions = [[np.pi/2,0], [np.pi/4, 0], [np.pi/2,0], [np.pi/4 +np.pi/2, 0], [np.pi/2, 0]]
+    targetVelocities = [0.0, 0.0]
+    Motor.servo_mode = 0x08
+    num_of_loop =30000
+    
+    for i in range(2):
+        tim = time.time()
+        nowtargetAngle = [+ motions[i][0], motions[i][1]]
+        nexttargetAngle = [+ motions[i+1][0], motions[i+1][1]]
+        #targetAngle = [motions[i][0],motions[i][1]]#choose one 
+        dt = time.time() - pre_time
+        pre_time = time.time()
+        
+        for j in range(num_of_loop):
+            # Calculate loop duration
+            targetAngle = [ nowtargetAngle[0]*(float)((num_of_loop -j)/num_of_loop) + nexttargetAngle[0]*(float)(j/num_of_loop), nowtargetAngle[1]*(float)((num_of_loop -j)/num_of_loop) + nexttargetAngle[1]*(float)(j/num_of_loop)]#choose one 
+            print(pre_time-tim)
+            
             for k in range(5):
-                # Update motor control
-                Motor.servo_mode = 0x08
-                errors = [(motor1.initialPosition_rad +np.pi/2 -motor1.rad) -targetAngle[0] , (motor2.rad - motor2.initialPosition_rad) - targetAngle[1]]            
-                val1,val2,gc,Model = adoptive_joint_impedance_control_2DOF(motor1, motor2, targetAngle, targetVelocities, dt, Model)
+                #for target Angle of j loop
+                dt = time.time() - pre_time
+                pre_time = time.time()
+                val1, val2, gc, errors, Model = adoptive_joint_impedance_control_2DOF(motor1, motor2, targetAngle, targetVelocities, dt, Model)
+                
                 data1 = motor1.create_data_packet_current(val1)
                 data1_receive = motor1.transfer_spi_data()
                 data2 = motor2.create_data_packet_current(val2)
                 data2_receive = motor2.transfer_spi_data()
+                
                 rad2radxy(motor1,motor2)
                 #databuffer = [pre_time,dt,motor1.pulse,motor1.rad,motor1.current,motor1.initialPosition,val1,motor2.pulse,motor2.rad,motor2.current,motor2.initialPosition,val2]
-                datalist.append([pre_time,dt,motor1.pulse,motor1.radxy,motor1.current,targetAngle[0],val1,motor2.pulse,motor2.radxy,motor2.current,targetAngle[1],val2,gc[0],-gc[1], errors[0], errors[1] ])
-                
+                datalist.append([pre_time,dt,motor1.radxy,targetAngle[0],motor1.current,val1,motor2.radxy,targetAngle[1],motor2.current,val2,-gc[0]*10,gc[1]*10,errors[0],errors[1],Model.model[0],Model.model[1]])
+                #datalist.append([pre_time,dt,motor1.radxy,targetAngle[0],motor1.current,val1,motor2.radxy,targetAngle[1],motor2.current,val2,-gc[0]*10,gc[1]*10,Model[0],Model[1],Model[2],Model[3]])#4d
                 """
                 print(data1)
                 print(data2)
@@ -749,11 +857,10 @@ def loop_impedance_adoptive(Model):
                 #print(motor1.current )
                 # Delay for a short while (example loop rate)
                 #time.sleep(0.01)
-        print(tim -pre_time)
-        with open(fname,"a",newline = "") as file:
-            writer = csv.writer(file)
-            writer.writerows(datalist)
-            
+        
+    with open(fname,"a",newline = "") as file:
+        writer = csv.writer(file)
+        writer.writerows(datalist)            
             
 def loop_workspace():
     data_label = ['time','dt','xd','yd','Ex','Ey','current1','current2','val_target1','val_target2','GC0','GC1']
@@ -829,7 +936,9 @@ if __name__ == "__main__":
     try:
         Motor.servo_mode = 0x00#already global
         #loop_impedance2()
-        loop_impedance_adoptive(Model)
+        loop_impedance_adoptive_slow()
+        
+        print(xfererror)
         loop_gravity_compensation()
         servo_mode = 0x00
         motor1.end_process_c()
@@ -847,4 +956,4 @@ if __name__ == "__main__":
         #motors.release()
         chip.close()
         #print(fname)
-        print("closed!")
+        print("closed w keyboard!")
