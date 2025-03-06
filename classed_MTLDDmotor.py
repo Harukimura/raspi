@@ -47,7 +47,7 @@ class Motor:
         self.SPI.open(spi_bus, spi_device)  # Bus 1, Device 1  (gpio12)
         self.SPI.mode = 3 #definetly 3 kijyutuniburegaaruga 3gayoi
         #self.SPI.max_speed_hz = 300000
-        self.SPI.max_speed_hz = 500000
+        self.SPI.max_speed_hz = 300000
         
         self.setting_Pulse = setting_pulse
         self.Kp = 1
@@ -224,9 +224,10 @@ class Motor:
     def initialize_motor_p(self):
         """ Initialize motor using SPI communication. """
         Motor.servo_mode = 0x00
+        hz_buff = self.SPI.max_speed_hz          
         self.SPI.max_speed_hz = 100000
         i= 0
-        while i<100:
+        while i<10:
             i+=1
             #print(f"failed {i} time")
             #create_data_packet_current(motor,0.0)
@@ -239,6 +240,8 @@ class Motor:
             if self.check == False:
                 print(f"failed {i} time")
                 i-=1
+               
+        self.SPI.max_speed_hz = hz_buff 
             
         self.initialPosition = self.pulse
         self.initialPosition_rad = self.rad
@@ -250,9 +253,10 @@ class Motor:
     def initialize_motor_c(self):
         """ Initialize motor using SPI communication. """
         Motor.servo_mode = 0x00
+        hz_buff = self.SPI.max_speed_hz 
         self.SPI.max_speed_hz = 100000
         i= 0
-        while i<100:
+        while i<10:
             i+=1
             #print(f"failed {i} time")
             #create_data_packet_current(motor,0.0)
@@ -264,7 +268,7 @@ class Motor:
             if self.check == False:
                 print(f"failed {i} time")
                 i-=1
-            
+        self.SPI.max_speed_hz = hz_buff     
         self.initialPosition = self.pulse
         self.initialPosition_rad = self.rad
         print("initial Position is ",end = "")
@@ -275,7 +279,7 @@ class Motor:
     def end_process_c(self):
         self.servo_mode = 0x00
         while not self.data_packet[0] == 0:
-            Motor.servo_mode = 0x00
+            Motor.servo_mode = 0x00            
             self.SPI.max_speed_hz = 100000
             i= 0
             while i<5:
@@ -311,6 +315,7 @@ class Motor:
                 time.sleep(0.01)
                 if self.check == True:
                     i+=1
+                
             print(self.data_packet)
             time.sleep(0.1)
             if self.data_packet[0] == 4:
@@ -322,14 +327,21 @@ class adoptiveModel:
         self.dim = dimension
         self.model = np.array(model_zero)
         self.threshold = np.array(threshold)
+        self.modelb =0
     def modelUpdate(self,val):
         for i in range(self.dim):
             if val[i] < self.threshold[i][0]:
                 self.model[i] = self.threshold[i][0]
+                #self.model[i] = self.model[i]
+                #k=1
             elif val[i] > self.threshold[i][1]:
                 self.model[i] = self.threshold[i][1]
+                #self.model[i] = self.model[i]
+                #k=1
             else:
-                self.model[i] = val[i]
+                self.modelb = self.model[i]
+                self.model[i] = val[i]*0.1 +self.modelb*0.9
+                #elif np.logical_and((abs(self.model[i]*0.95) <= abs(val[i])),  abs(val[i])<=(abs(self.model[i]*1.05))):
     # 動作確認
     #M = adoptiveModel(dimension=2, model_zero=[0.4, 0.4], threshold=[[0.3, 0.5], [0.3, 0.5]])
     #M.modelUpdate([0.2, 0.6])  # 更新後 self.model は [0.3, 0.5]
@@ -369,7 +381,7 @@ def gravity_compensation(motor_a, motor_b):
 
 def adoptive_gravity_compensation(motor_a,motor_b, model, target_angles):
     #print(model)
-    Ginv = np.array([[0.005, 0],[0, 0.005]])
+    Ginv = np.array([[0.01, 0],[0, 0.01]])
     #Yqd = np.array([[np.cos(target_angles[0]), 0],[0, np.cos(target_angles[1])]])#target?
     Yqd = np.array([[np.cos(motor_a.radxy), 0],[0, np.cos(motor_b.radxy)]])
     #model = model  - Ginv @ Yqd.T @ errors
@@ -442,7 +454,7 @@ def adoptive_joint_impedance_control_2DOF(motor_a, motor_b, target_angles, targe
     error_dots =[ -(motor_a.rad - motor_a.old_rad)/dt -target_velocities[0], (motor_b.rad - motor_b.old_rad)/dt -target_velocities[1]]
     
     #C = [[0.02, 0.0], [0.0, 0.02]]  #粘性
-    C = [[0.00, 0.0], [0.0, 0.02]]  #粘性
+    C = [[0.005, 0.0], [0.0, 0.01]]  #粘性
     K = [[0.5, 0.0], [0.0, 0.5]]  #剛性
     #K = [[1.0, 0.0], [0.0, 1.0]]  #剛性
     ga, model= adoptive_gravity_compensation(motor_a, motor_b, model, target_angles)
@@ -817,13 +829,16 @@ def loop_impedance_adoptive_slow():
     tim = time.time()
     datalist = []
     #motions = [[np.pi/2,0],[np.pi/4+np.pi/2,0],[+np.pi,np.pi/2],[np.pi/4+np.pi/2, np.pi/4],[np.pi/4, -np.pi/4],[0,-np.pi/2],[0,-np.pi/2]
-    motions = [[np.pi/2,0], [np.pi/4, 0], [np.pi/2,0], [np.pi/4 +np.pi/2, 0], [np.pi/2, 0], [np.pi/4, 0], [np.pi/2,0], [np.pi/4 +np.pi/2, 0], [np.pi/2, 0]]
+    #motions = [[np.pi/2,0], [np.pi/4, 0], [np.pi/2,0], [np.pi/4 +np.pi/2, 0], [np.pi/2, 0], [np.pi/4, 0], [np.pi/2,0], [np.pi/4 +np.pi/2, 0], [np.pi/2, 0]]
     #motions = [[np.pi/2 + np.pi/4,0], [np.pi/2 + np.pi/4, np.pi/4], [np.pi/2 + np.pi/4,np.pi/2], [np.pi/4 +np.pi/2, np.pi/4], [np.pi/2 + np.pi/4, 0], [np.pi/2 + np.pi/4, np.pi/4], [np.pi/2 + np.pi/4,np.pi/2], [np.pi/2 + np.pi/4, np.pi/4], [np.pi/2 + np.pi/4, 0]]
+    motions = [[3*np.pi/4,0], [3*np.pi/4, np.pi/3], [3*np.pi/4,np.pi/6], [3*np.pi/4, np.pi/4], [np.pi, np.pi/4], [np.pi, np.pi/3], [np.pi,np.pi/6], [3*np.pi/4, np.pi/4], [3*np.pi/4, 0],[5*np.pi/6,0], [5*np.pi/6, np.pi/3], [5*np.pi/6,np.pi/6], [5*np.pi/6, np.pi/4],[2*np.pi/3,0], [2*np.pi/3, np.pi/3], [2*np.pi/3,np.pi/6], [2*np.pi/3, np.pi/4],[np.pi/2, 0]]
     targetVelocities = [0.0, 0.0]
     Motor.servo_mode = 0x08
-    num_of_loop =5
+    num_of_loop =17
+    num_of_slice=1
     
-    for i in range(4):
+    
+    for i in range(num_of_loop):
         tim = time.time()
         nowtargetAngle = [+ motions[i][0], motions[i][1]]
         nexttargetAngle = [+ motions[i+1][0], motions[i+1][1]]
@@ -831,12 +846,12 @@ def loop_impedance_adoptive_slow():
         dt = time.time() - pre_time
         pre_time = time.time()
         
-        for j in range(num_of_loop):
+        for j in range(num_of_slice):
             # Calculate loop duration
             targetAngle = [ nowtargetAngle[0]*(float)((num_of_loop -j)/num_of_loop) + nexttargetAngle[0]*(float)(j/num_of_loop), nowtargetAngle[1]*(float)((num_of_loop -j)/num_of_loop) + nexttargetAngle[1]*(float)(j/num_of_loop)]#choose one 
             print(pre_time-tim)
             
-            for k in range(30000):
+            for k in range(10000):
                 #for target Angle of j loop
                 dt = time.time() - pre_time
                 pre_time = time.time()
