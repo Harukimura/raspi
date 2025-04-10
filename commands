@@ -11,8 +11,13 @@ sudo apt　update
 sudo apt upgrade
 
 sudo apt install raspi-config #for SPI GPIO and some settings
-sudo apt install python3-RPI.GPIO　python3-gpiozero　python3-spidev
+sudo apt install python3-RPI.GPIO　python3-gpiozero　python3-spidev　python3.10‐venv
 
 
 #kasoukannkyounai
 pip install numpy pandas 
+
+ubuntuの~/boot/firmware/config.txt
+
+dtoverlay=spi1-3cs
+
