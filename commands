@@ -11,8 +11,7 @@ sudo apt　update
 sudo apt upgrade
 
 sudo apt install raspi-config #for SPI GPIO and some settings
-sudo apt install python3-RPI.GPIO
-sudo apt install python3-gpiozero
+sudo apt install python3-RPI.GPIO　python3-gpiozero　python3-spidev
 
 
 #kasoukannkyounai
